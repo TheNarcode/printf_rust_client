@@ -1,4 +1,5 @@
 use std::fs::{self, File};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,9 +17,13 @@ pub mod types;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let logs_dir = dirs::data_local_dir().unwrap().join("printf").join("logs");
+    let config_path = get_config_path()?;
+
     fs::create_dir_all(&logs_dir)?;
+    fs::create_dir_all(config_path.parent().unwrap())?;
 
     Ftail::new()
+        .console(LevelFilter::Info)
         .daily_file(&logs_dir, LevelFilter::Info)
         .init()?;
 
@@ -29,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let client = es::ClientBuilder::for_url(&config.event_url)?
         .reconnect(
             es::ReconnectOptions::reconnect(true)
-                .retry_initial(false)
+                .retry_initial(true)
                 .delay(Duration::from_secs(1))
                 .backoff_factor(2)
                 .delay_max(Duration::from_secs(60))
@@ -95,11 +100,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 
 pub fn read_config() -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
+    let config_dir = get_config_path()?;
+    let file = File::open(&config_dir)?;
+    Ok(serde_json::from_reader(file)?)
+}
+
+pub fn get_config_path() -> Result<PathBuf, Box<dyn std::error::Error + Send + Sync>> {
     let config_dir = dirs::config_local_dir()
         .unwrap()
         .join("printf")
         .join("config.json");
 
-    let file = File::open(&config_dir)?;
-    Ok(serde_json::from_reader(file)?)
+    Ok(config_dir)
 }
