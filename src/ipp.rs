@@ -22,7 +22,7 @@ impl PrinterManager {
         }
     }
 
-    pub fn get_printer(&mut self, color_mode: &ColorMode) -> Option<&Printer> {
+    pub fn get_printer(&mut self, color_mode: &ColorMode) -> Option<Printer> {
         let color_mode_printers: Vec<_> = self
             .printers
             .iter()
@@ -37,13 +37,13 @@ impl PrinterManager {
             ColorMode::Color => {
                 let printer = color_mode_printers[self.color_counter % color_mode_printers.len()];
                 self.color_counter += 1;
-                Some(printer)
+                Some(printer.clone())
             }
             ColorMode::Monochrome => {
                 let printer =
                     color_mode_printers[self.monochrome_counter % color_mode_printers.len()];
                 self.monochrome_counter += 1;
-                Some(printer)
+                Some(printer.clone())
             }
         }
     }
@@ -52,7 +52,7 @@ impl PrinterManager {
 pub async fn print_job(
     printer_uri: Uri,
     attributes: PrintAttributes,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let file = download_file(attributes.file.clone()).await?;
     let payload = IppPayload::new_async(file);
 
@@ -65,7 +65,9 @@ pub async fn print_job(
     Ok(())
 }
 
-async fn download_file(file_id: String) -> Result<Cursor<Bytes>, Box<dyn std::error::Error>> {
+async fn download_file(
+    file_id: String,
+) -> Result<Cursor<Bytes>, Box<dyn std::error::Error + Send + Sync>> {
     let base_url = read_config()?.s3_base_url;
     let file_url = format!("{}{}", base_url, file_id);
     let response = reqwest::get(file_url).await?;
@@ -90,7 +92,7 @@ fn build_ipp_attributes(attributes: PrintAttributes) -> Vec<IppAttribute> {
     .collect()
 }
 
-pub async fn get_ipp_printers() -> Result<Vec<Printer>, Box<dyn std::error::Error>> {
+pub async fn get_ipp_printers() -> Result<Vec<Printer>, Box<dyn std::error::Error + Send + Sync>> {
     let client = AsyncIppClient::builder("http://localhost:631".parse()?).build();
     let operation = IppOperationBuilder::cups().get_printers();
     let result = client.send(operation).await?;

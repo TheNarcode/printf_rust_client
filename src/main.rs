@@ -14,7 +14,7 @@ pub mod ipp;
 pub mod types;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let logs_dir = dirs::data_local_dir().unwrap().join("printf").join("logs");
     fs::create_dir_all(&logs_dir)?;
 
@@ -51,18 +51,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if let "update" = e.event_type.as_str() {
                     log::info!("got new print command");
 
-                    let attributes: PrintAttributes = serde_json::from_str(&e.data).unwrap();
-                    let mut pm_guard = pm.lock().unwrap();
+                    let attributes: PrintAttributes = match serde_json::from_str(&e.data) {
+                        Ok(attr) => attr,
+                        Err(err) => {
+                            log::error!("failed to parse print attributes: {}", err);
+                            return Ok(());
+                        }
+                    };
 
-                    let printer = pm_guard.get_printer(&attributes.color).unwrap();
+                    let printer = {
+                        let mut pm_guard = pm.lock().unwrap();
+                        match pm_guard.get_printer(&attributes.color) {
+                            Some(p) => p,
+                            None => {
+                                log::error!(
+                                    "no printer found for color mode: {:?}",
+                                    attributes.color
+                                );
+                                return Ok(());
+                            }
+                        }
+                    };
 
-                    log::info!("using printer {} for print", printer.uri);
+                    tokio::spawn(async move {
+                        log::info!("using printer {} for print", printer.uri);
 
-                    print_job(printer.uri.parse().unwrap(), attributes)
-                        .await
-                        .unwrap();
-
-                    log::info!("print job successful");
+                        match printer.uri.parse() {
+                            Ok(uri) => match print_job(uri, attributes).await {
+                                Ok(_) => log::info!("print job successful"),
+                                Err(e) => log::error!("print job failed: {}", e),
+                            },
+                            Err(e) => log::error!("failed to parse printer URI: {}", e),
+                        }
+                    });
                 }
             }
 
@@ -73,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-pub fn read_config() -> Result<Config, Box<dyn std::error::Error>> {
+pub fn read_config() -> Result<Config, Box<dyn std::error::Error + Send + Sync>> {
     let config_dir = dirs::config_local_dir()
         .unwrap()
         .join("printf")
